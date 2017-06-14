@@ -6,6 +6,7 @@
 #include <memory>
 
 #include <windows.h>
+#include <tchar.h>
 
 class BCR2000;
 
@@ -23,12 +24,12 @@ public:
 
 	BCR2000 & m_bcr;
 
-	int find_device(const std::wstring & name) {
+	int find_device(const TCHAR * name) {
 		const UINT num_out_devs = midiOutGetNumDevs();
 		for (UINT i = 0; i < num_out_devs; i++) {
 			MIDIOUTCAPS moc;
 			if (!midiOutGetDevCaps(i, &moc, sizeof(MIDIOUTCAPS))) {
-				if (std::wstring(moc.szPname) == name) {
+				if (std::basic_string<TCHAR>(moc.szPname) == name) {
 					return i;
 				}
 			}
@@ -36,9 +37,9 @@ public:
 		return -1;
 	}
 
-	bool open(const wchar_t * name) {
+	bool open(const TCHAR * name) {
 		const int device_id = find_device(name);
-		MMRESULT res = midiOutOpen(&midi_out_handle, device_id, (DWORD)(void*)MidiOutProc, (DWORD_PTR)(&m_bcr), CALLBACK_FUNCTION);
+		MMRESULT res = midiOutOpen(&midi_out_handle, device_id, (DWORD_PTR)(void*)MidiOutProc, (DWORD_PTR)(&m_bcr), CALLBACK_FUNCTION);
 		if (res != 0) {
 			return false;
 		}
@@ -57,7 +58,7 @@ public:
 		}
 		return true;
 	}
-	bool sysex(size_t size, char * data) {
+	bool sysex(int size, char * data) {
 		MIDIHDR midiHeader;
 		midiHeader.dwFlags = 0;
 		midiHeader.lpData = data;
@@ -96,12 +97,12 @@ private:
 	static void CALLBACK MidiInProc(HMIDIIN hMidiIn, UINT wMsg, DWORD_PTR dwInstance, DWORD_PTR dwParam1, DWORD_PTR dwParam2);
 
 public:
-	int find_device(const std::wstring & name) {
+	int find_device(const TCHAR * name) {
 		const UINT num_in_devs = midiInGetNumDevs();
 		for (UINT i = 0; i < num_in_devs; i++) {
 			MIDIINCAPS mic;
 			if (!midiInGetDevCaps(i, &mic, sizeof(MIDIINCAPS))) {
-				if (std::wstring(mic.szPname) == name) {
+				if (std::basic_string<TCHAR>(mic.szPname) == name) {
 					return i;
 				}
 			}
@@ -109,7 +110,7 @@ public:
 		return -1;
 	}
 
-	bool open(const std::wstring & name) {
+	bool open(const TCHAR * name) {
 		const int device_id = find_device(name);
 		if (device_id == -1) {
 			return false;
@@ -172,6 +173,10 @@ private:
 			++idx;
 		}
 
+		int size() {
+			return static_cast<int>(data.size());
+		}
+
 		void show() {
 			for (size_t i = 0; i < data.size(); ++i) {
 				std::cout << std::hex << (int)data[i] << " ";
@@ -181,12 +186,12 @@ private:
 	};
 
 public:
-	BCR2000() : m_midiIn(*this), m_midiOut(*this) {
-		if (!m_midiIn.open(L"BCR2000")) {
+	BCR2000(int channel) : m_midiIn(*this), m_midiOut(*this), m_channel(channel) {
+		if (!m_midiIn.open(_T("BCR2000"))) {
 			m_isConnected = false;
 			return;
 		}
-		if (!m_midiOut.open(L"BCR2000")) {
+		if (!m_midiOut.open(_T("BCR2000"))) {
 			m_isConnected = false;
 			return;
 		}
@@ -198,12 +203,12 @@ public:
 		m("$rev R1");
 		m("$button %d", button);
 		m("  .showvalue on");
-		m("  .easypar CC 1 %d 0 1 toggleon", m_channel);
+		m("  .easypar CC %d %d 0 1 toggleon", m_channel + 1, m_controller);
 		m("  .mode down");
 		m("$end");
-		m_midiOut.sysex(m.data.size(), &m.data[0]);
-		m_listener[m_channel] = std::unique_ptr<Listener>(new Listener([callback](int data) { callback(); }));
-		++m_channel;
+		m_midiOut.sysex(m.size(), &m.data[0]);
+		m_listener[m_controller] = std::unique_ptr<Listener>(new Listener([callback](int data) { callback(); }));
+		++m_controller;
 	}
 
 	void AddToggleButton(int button, std::function<void(bool)> callback) {
@@ -211,12 +216,12 @@ public:
 		m("$rev R1");
 		m("$button %d", button);
 		m("  .showvalue on");
-		m("  .easypar CC 1 %d 0 1 toggleoff", m_channel);
+		m("  .easypar CC %d %d 0 1 toggleoff", m_channel + 1, m_controller);
 		m("  .mode toggle");
 		m("$end");
-		m_midiOut.sysex(m.data.size(), &m.data[0]);
-		m_listener[m_channel] = std::unique_ptr<Listener>(new Listener([callback](int data) { callback(data == 0); }));
-		++m_channel;
+		m_midiOut.sysex(m.size(), &m.data[0]);
+		m_listener[m_controller] = std::unique_ptr<Listener>(new Listener([callback](int data) { callback(data == 0); }));
+		++m_controller;
 	}
 
 	void AddOnOffButton(int button, std::function<void(bool)> callback) {
@@ -224,12 +229,12 @@ public:
 		m("$rev R1");
 		m("$button %d", button);
 		m("  .showvalue on");
-		m("  .easypar CC 1 %d 0 1 toggleoff", m_channel);
+		m("  .easypar CC %d %d 0 1 toggleoff", m_channel + 1, m_controller);
 		m("  .mode updown");
 		m("$end");
-		m_midiOut.sysex(m.data.size(), &m.data[0]);
-		m_listener[m_channel] = std::unique_ptr<Listener>(new Listener([callback](int data) { callback(data == 0); }));
-		++m_channel;
+		m_midiOut.sysex(m.size(), &m.data[0]);
+		m_listener[m_controller] = std::unique_ptr<Listener>(new Listener([callback](int data) { callback(data == 0); }));
+		++m_controller;
 	}
 
 	void AddRelativeEncoder(int encoder, std::function<void(int)> callback) {
@@ -237,13 +242,13 @@ public:
 		m("$rev R1");
 		m("$encoder %d", encoder);
 		m("  .showvalue off");
-		m("  .easypar CC 1 %d 0 127 relative-2", m_channel);
+		m("  .easypar CC %d %d 0 127 relative-2", m_channel + 1, m_controller);
 		m("  .resolution 96 192 768 2304");
 		m("  .mode 1dot/off");
 		m("$end");
-		m_midiOut.sysex(m.data.size(), &m.data[0]);
-		m_listener[m_channel] = std::unique_ptr<Listener>(new Listener([callback](int data) { callback(data - 64); }));
-		++m_channel;
+		m_midiOut.sysex(m.size(), &m.data[0]);
+		m_listener[m_controller] = std::unique_ptr<Listener>(new Listener([callback](int data) { callback(data - 64); }));
+		++m_controller;
 	}
 
 	void AddAbsoluteEncoder(int encoder, int minVal, int maxVal, bool hires, std::function<void(int)> callback) {
@@ -251,41 +256,44 @@ public:
 		m("$rev R1");
 		m("$encoder %d", encoder);
 		m("  .showvalue on");
-		m("  .easypar CC 1 %d %d %d absolute%s", m_channel, minVal, maxVal, hires ? "/14" : "");
+		m("  .easypar CC %d %d %d %d absolute%s", m_channel + 1, m_controller, minVal, maxVal, hires ? "/14" : "");
 		m("  .mode bar");
 		m("$end");
-		m_midiOut.sysex(m.data.size(), &m.data[0]);
-		m_listener[m_channel] = std::unique_ptr<Listener>(new Listener([callback](int data) { callback(data); }, hires));
-		++m_channel;
+		m_midiOut.sysex(m.size(), &m.data[0]);
+		m_listener[m_controller] = std::unique_ptr<Listener>(new Listener([callback](int data) { callback(data); }, hires));
+		++m_controller;
 	}
 
-	void data(int channel, int data) {
-		int realChan = channel;
-		if (channel >= 32 && channel <= 63 && m_listener[channel - 32] && m_listener[channel - 32]->m_hires) {
-			realChan -= 32;
+	void data(int channel, int controller, int data) {
+		if (channel != m_channel)
+			return;
+
+		int realCtrl = controller;
+		if (controller >= 32 && controller <= 63 && m_listener[controller - 32] && m_listener[controller - 32]->m_hires) {
+			realCtrl -= 32;
 		}
 
-		if (!m_listener[realChan]) {
+		if (!m_listener[realCtrl]) {
 			return;
 		}
 
-		if (!m_listener[realChan]->m_hires) {
-			m_listener[realChan]->trigger(data);
+		if (!m_listener[realCtrl]->m_hires) {
+			m_listener[realCtrl]->trigger(data);
 			return;
 		}
 
-		if (channel == realChan) {
+		if (controller == realCtrl) {
 			data <<= 7;
 		}
 
-		if (m_waiting[realChan]) {
-			m_waiting[realChan] = false;
-			m_listener[realChan]->trigger(m_value[realChan] + data);
+		if (m_waiting[realCtrl]) {
+			m_waiting[realCtrl] = false;
+			m_listener[realCtrl]->trigger(m_value[realCtrl] + data);
 			return;
 		}
 		else {
-			m_waiting[realChan] = true;
-			m_value[realChan] = data;
+			m_waiting[realCtrl] = true;
+			m_value[realCtrl] = data;
 			return;
 		}
 
@@ -294,7 +302,8 @@ public:
 	bool IsConnected() { return m_isConnected; }
 
 private:
-	int m_channel = 0;
+	int m_channel = 1;
+	int m_controller = 0;
 	std::unique_ptr<Listener> m_listener[127];
 	int m_value[127] = { 0 };
 	bool m_waiting[127] = { false };
@@ -306,8 +315,11 @@ private:
 void CALLBACK midi_in::MidiInProc(HMIDIIN hMidiIn, UINT wMsg, DWORD_PTR dwInstance, DWORD_PTR dwParam1, DWORD_PTR dwParam2) {
 	if (wMsg == MIM_DATA) {
 		BCR2000 * bcr = (BCR2000 *) dwInstance;
-		if ((dwParam1 & 0xff) == 0xb0) {
-			bcr->data((dwParam1 & 0xff00) >> 8, (dwParam1 & 0xff0000) >> 16);
+		enum { CHANNEL_MASK = 0x0f };
+		enum { TYPE_MASK = 0xf0 };
+		enum { TYPE_CONTROL_CHANGE = 0xb0 };
+		if ((dwParam1 & TYPE_MASK) == TYPE_CONTROL_CHANGE) {
+			bcr->data(dwParam1 & CHANNEL_MASK, (dwParam1 & 0xff00) >> 8, (dwParam1 & 0xff0000) >> 16);
 		}
 	}
 	return;

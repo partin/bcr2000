@@ -8,7 +8,7 @@
 using namespace std;
 
 int main() {
-	BCR2000 bcr;
+	BCR2000 bcr(1);
 
 	if (!bcr.IsConnected()) {
 		return 0;
